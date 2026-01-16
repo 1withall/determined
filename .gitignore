@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 prompt_template.txt
+
+# MCP archives
+.mcp_archive/
