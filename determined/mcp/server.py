@@ -59,16 +59,34 @@ class MCPServer:
         review_id = pre.metadata.get("change_id")
         if not review_id:
             raise ValueError("pre must contain a change_id in metadata")
+        # Build an elicitation schema to support in-chat human approvals. This
+        # schema is a JSON Schema fragment that clients can use to render a
+        # form or validate the user's response before calling back into
+        # `handle_review_response`.
+        elicitation_schema = {
+            "type": "object",
+            "properties": {
+                "approved": {"type": "boolean", "description": "Approval decision"},
+                "feedback": {"type": ["string", "null"], "description": "Optional reviewer feedback"},
+            },
+            "required": ["approved"],
+        }
+
         payload = {
             "review_id": review_id,
             "message": (
                 f"Change request: {pre.summary}\n\n"
                 "Please review the processed diff and metadata below and reply with:"
-                " `approved: true` to apply or `approved: false` to reject."
+                " `{""approved"": true}` to apply or `{""approved"": false}` to reject."
             ),
             "summary": pre.summary,
             "unified_diff": pre.unified_diff,
             "metadata": pre.metadata,
+            "elicitation": elicitation_schema,
+            "reply_instructions": (
+                "Submit your response as a JSON object matching `elicitation` (fields: approved, optional feedback),"
+                " or invoke the repository admin API to call `handle_review_response(review_id, approved, feedback)`."
+            ),
         }
         # store as pending until decision is made
         self._pending_reviews[review_id] = pre

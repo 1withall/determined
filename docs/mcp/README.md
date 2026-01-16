@@ -24,6 +24,26 @@ Human Review & Auditing
 - All decisions, diffs, and apply-details are archived under `.mcp_archive/<change_id>/`.
 
 
+## Task-based workflow (recommended)
+
+This adapter supports the MCP experimental "tasks" workflow which lets a
+single tool call remain active while waiting for human elicitation responses.
+This is the preferred flow when you want the agent to remain "locked" into a
+single request and avoid repeated tool calls when user input is required.
+
+High-level flow:
+
+1. Agent calls the `request_change` tool as a *task* (the adapter requires task mode for this tool).
+2. The server starts a task and first elicits consent to *use* the tool. The human can accept/decline the use of the tool.
+3. If the human accepts, the server runs the deterministic Pre-Approval Pipeline on the provided diff (validation, analysis, normalization).
+4. The server prepares a human-review payload (`review_id`, `summary`, `unified_diff`, `metadata`) and elicits final approval/rejection from the human for *applying* the change.
+5. If approved, the server applies the change, archives artifacts, and commits the change; if rejected, a rejection record is archived.
+
+Example (client-side) - use `ClientSession.experimental.call_tool_as_task(...)` and
+supply an `elicitation_callback` that responds to the two elicitation prompts
+(approve use, then approve/reject the processed diff). See `tests/test_task_workflow.py` for a working example.
+
+
 ## Quickstart: Running the Determined MCP adapter (stdio)
 
 This repository includes a small adapter that exposes the local,
@@ -35,13 +55,18 @@ Run the stdio server (suitable for editor integrations):
 
     uv run python main.py stdio
 
-The adapter exposes the following tools (examples):
-- `preprocess` — Accepts a `RequestChange`-like payload and returns a
-  processed `PreprocessedChange` encoded as JSON inside a text content block.
-- `prepare_human_review` — Given a `change_id` will produce a review payload
-  that is suitable for in-chat human presentation.
-- `handle_review_response` — Accepts `review_id`, `approved` (bool), and
-  optional `feedback` and will either apply the change or record a rejection.
+The adapter exposes a single, gated tool for AI agents:
+- `request_change` — Accepts `summary` and `unified_diff` and runs the full
+  deterministic pre-approval pipeline. Returns a structured review payload
+  (`review_id`, `message`, `summary`, `unified_diff`, `metadata`) that must be
+  presented to a human for approval. Human approval/rejection is handled by
+  calling the repository-side APIs (e.g., the `MCPServer.handle_review_response`
+  method) — these steps are intentionally separated from the agent-facing
+  tool to enforce gating.
+
+Human operators can still call the `MCPServer` API directly (e.g., via a chat
+controller or an administrative tool) to perform `prepare_human_review` and
+`handle_review_response` actions when required.
 
 ### Integrating with Visual Studio Code
 

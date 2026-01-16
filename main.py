@@ -40,61 +40,133 @@ def create_mcp_adapter(repo_root: Path | None = None, archive_root: Path | None 
     archive_root = Path(".mcp_archive") if archive_root is None else archive_root
 
     tool_server = Server("determined-mcp")
+    # Enable experimental task support so that tools can run as long-lived
+    # tasks and request elicitation from humans during execution.
+    tool_server.experimental.enable_tasks()
 
     # Underlying deterministic server instance
     det = MCPServer(repo_root=repo_root, archive_root=archive_root)
 
     @tool_server.list_tools()
     async def _list_tools() -> list[Tool]:
-        """Return a small set of tools exposed by the adapter."""
+        """Return the single gated tool exposed to agents: `request_change`.
+
+        This enforces the project spec's gating requirement — the agent only has
+        access to a single, tightly constrained tool for making changes to the
+        repository (the human review and application steps are performed outside
+        of the agent's toolset).
+        """
+        from mcp.types import ToolExecution, TASK_REQUIRED
+
         return [
             Tool(
-                name="preprocess",
-                description="Preprocess a change request (returns processed change JSON)",
-                inputSchema={"type": "object", "properties": {"payload": {"type": "object"}}, "required": ["payload"]},
-            ),
-            Tool(
-                name="prepare_human_review",
-                description="Prepare a review payload for a preprocessed change (requires metadata.change_id)",
-                inputSchema={"type": "object", "properties": {"change_id": {"type": "string"}}, "required": ["change_id"]},
-            ),
-            Tool(
-                name="handle_review_response",
-                description="Handle a human review decision (approved:bool)",
-                inputSchema={"type": "object", "properties": {"review_id": {"type": "string"}, "approved": {"type": "boolean"}, "feedback": {"type": ["string", "null"]}}, "required": ["review_id", "approved"]},
+                name="request_change",
+                description=(
+                    "Submit a change request (summary + unified_diff). "
+                    "The server validates and preprocesses the change and runs as a task to "
+                    "support elicitation-based approvals."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string", "minLength": 10, "maxLength": 2000},
+                        "unified_diff": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["summary", "unified_diff"],
+                },
+                execution=ToolExecution(taskSupport=TASK_REQUIRED),
+                outputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string"},
+                        "status": {"type": "string"},
+                    },
+                    "required": ["task_id", "status"],
+                },
             ),
         ]
 
     @tool_server.call_tool()
     async def _call_tool(name: str, arguments: dict[str, Any]):
-        """Dispatch tool calls to the deterministic MCPServer. Results are
-        returned as a list of TextContent objects (JSON encoded in the text).
+        """Dispatch tool calls to the deterministic MCPServer.
+
+        Only `request_change` is available to the agent (gated). The tool returns
+        a structured review payload that a human reviewer can present in-chat.
+        Returning a dict enables structured output validation by the MCP server.
         """
-        if name == "preprocess":
-            payload = arguments.get("payload")
-            if payload is None:
-                raise ValueError("missing 'payload' argument")
-            pre = det.preprocess(payload)
-            return [TextContent(type="text", text=json.dumps(pre.model_dump(), ensure_ascii=False))]
+        if name == "request_change":
+            # Task-based implementation per the MCP tasks spec.
+            from mcp.types import CreateTaskResult, CallToolResult, TextContent
+            from mcp.types import TASK_REQUIRED
+            from determined.mcp.schemas import RequestChange
 
-        if name == "prepare_human_review":
-            change_id = arguments.get("change_id")
-            if change_id is None:
-                raise ValueError("missing 'change_id' argument")
-            pre = det._pending_reviews.get(change_id)
-            if pre is None:
-                raise KeyError("unknown change_id")
-            payload = det.prepare_human_review(pre)
-            return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))]
+            summary = arguments.get("summary")
+            unified_diff = arguments.get("unified_diff")
+            if summary is None or unified_diff is None:
+                raise ValueError("'summary' and 'unified_diff' are required")
 
-        if name == "handle_review_response":
-            review_id = arguments.get("review_id")
-            approved = arguments.get("approved")
-            feedback = arguments.get("feedback")
-            if review_id is None or approved is None:
-                raise ValueError("'review_id' and 'approved' required")
-            result = det.handle_review_response(review_id, bool(approved), feedback)
-            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+            # Validate input via RequestChange
+            req = RequestChange(summary=summary, unified_diff=unified_diff)
+
+            # Server request context
+            ctx = tool_server.request_context
+            # Enforce that the client calls this tool as a task
+            ctx.experimental.validate_task_mode(TASK_REQUIRED)
+
+            async def work(task):
+                # 1) Ask human to approve use of the tool (separate from the post-preprocess approval)
+                use_schema = {
+                    "type": "object",
+                    "properties": {"approve_use": {"type": "boolean"}},
+                    "required": ["approve_use"],
+                }
+                # Defensive: ensure that the task exists in the store before elicitation to avoid rare races
+                for _ in range(10):
+                    all_tasks = task.store.get_all_tasks()
+                    if any(t.taskId == task.task.taskId for t in all_tasks):
+                        break
+                    import anyio as _anyio
+
+                    await _anyio.sleep(0.01)
+
+                use_resp = await task.elicit(message="Approve use of request_change tool?", requestedSchema=use_schema)
+                if use_resp.action != "accept" or not use_resp.content.get("approve_use"):
+                    return CallToolResult(content=[TextContent(type="text", text="Tool use rejected by human")])
+
+                # 2) Run Pre-Approval Pipeline deterministically
+                pre = det.preprocess(req.model_dump())
+
+                # 3) Prepare the human review payload (stores pending review)
+                review_payload = det.prepare_human_review(pre)
+
+                # 4) Elicit the human review with the processed diff + summary + review id
+                review_schema = {
+                    "type": "object",
+                    "properties": {
+                        "approved": {"type": "boolean"},
+                        "feedback": {"type": ["string", "null"]},
+                    },
+                    "required": ["approved"],
+                }
+
+                prompt = (
+                    f"Request ID: {review_payload['review_id']}\n"
+                    f"Summary: {review_payload['summary']}\n\n"
+                    "Please review the processed diff and reply with approved=true to apply or approved=false to reject."
+                )
+
+                review_resp = await task.elicit(message=prompt, requestedSchema=review_schema)
+
+                # 5) Apply or reject based on the review response
+                if review_resp.action == "accept" and review_resp.content.get("approved"):
+                    result = det.handle_review_response(review_payload["review_id"], True, review_resp.content.get("feedback"))
+                    return CallToolResult(content=[TextContent(type="text", text=json.dumps({"status": "applied", "archived_to": result.get("archived_to")}))])
+                else:
+                    result = det.handle_review_response(review_payload["review_id"], False, review_resp.content.get("feedback"))
+                    return CallToolResult(content=[TextContent(type="text", text=json.dumps({"status": "rejected", "archived_to": result.get("archived_to")}))])
+
+            # Start the task and return the CreateTaskResult immediately
+            return await ctx.experimental.run_task(work)
 
         raise ValueError(f"unknown tool: {name}")
 

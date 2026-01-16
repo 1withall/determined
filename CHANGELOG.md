@@ -1,3 +1,16 @@
+Thu Jan 15 09:51:23 PM EST 2026 - Add task-based `request_change` workflow with dual human approvals
+
+- Implemented task-capable `request_change` tool (TASK_REQUIRED) that runs as a long-lived task and performs:
+  1. Initial human *use* approval (elicitation)
+  2. Deterministic Pre-Approval Pipeline (validation, analysis, normalization)
+  3. Second human *apply* approval elicitation with processed `diff`, `summary`, and `review_id`
+  4. On approval, apply + archive + commit; on rejection, archive rejection metadata
+- Added `tests/test_task_workflow.py` exercising the full agent -> human (use + review) -> apply flow using an elicitation callback.
+- Updated docs (`docs/mcp/README.md`) with Task-based workflow guidance and examples.
+- Added CHANGES and test coverage to ensure 100% coverage remains.
+
+---
+
 Thu Jan 15 08:54:44 PM EST 2026 - Add MCP protocol adapter + VS Code workspace config
 
 - Added `main.py` MCP adapter that exposes `determined.mcp` as a Model Context Protocol server over `stdio` and `streamable-http` transports.
@@ -6,8 +19,6 @@ Thu Jan 15 08:54:44 PM EST 2026 - Add MCP protocol adapter + VS Code workspace c
 - Added `tests/test_main_server.py` validating an in-memory stdio client can call the `preprocess` tool and receive deterministic output.
 - Updated `docs/mcp/README.md` with quickstart instructions for running the adapter and configuring VS Code.
 - This change adds no remote services and adheres to on-premise usage requirements.
-
----
 
 Thu Jan 15 08:03:46 PM EST 2026 - Added local MCP server package
 

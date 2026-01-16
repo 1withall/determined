@@ -31,6 +31,13 @@ def test_human_approval_creates_commit_and_archive(tmp_path: Path):
 
     assert "review_id" in payload
     assert payload["summary"].startswith("Add approve file")
+    # The payload must include an elicitation schema suitable for in-chat
+    # human approvals and instructions for how to reply.
+    assert "elicitation" in payload
+    elic = payload["elicitation"]
+    assert isinstance(elic, dict)
+    assert "required" in elic and "approved" in elic["required"]
+    assert "reply_instructions" in payload
 
     # Simulate human approval
     res = server.handle_review_response(payload["review_id"], approved=True, feedback=None)
