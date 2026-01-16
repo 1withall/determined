@@ -1,9 +1,11 @@
-Thu Jan 15 08:30:41 PM EST 2026 - Add human-in-the-loop review API (chat-based) and commit-on-approval
+Thu Jan 15 08:54:44 PM EST 2026 - Add MCP protocol adapter + VS Code workspace config
 
-- Added `MCPServer.prepare_human_review` which returns a structured review payload suitable for in-chat presentation (includes `review_id`, `summary`, `unified_diff`, and `metadata`).
-- Added `MCPServer.handle_review_response` to accept an in-chat human decision (`approved: bool`) and optional feedback; approved changes are applied and committed into git; rejections are archived with feedback.
-- `apply_preprocessed_change(..., commit=True)` will initialize a repo (if needed), stage, and commit changes with a deterministic, metadata-rich commit message.
-- Added tests covering approval and rejection flows and error paths; updated docs to describe the in-chat review API.
+- Added `main.py` MCP adapter that exposes `determined.mcp` as a Model Context Protocol server over `stdio` and `streamable-http` transports.
+- Added `mcp.json` workspace config registering the `determined` stdio server for IDE/client integration.
+- Added `.vscode/settings.json` to point VS Code at the workspace `mcp.json` (non-invasive workspace settings).
+- Added `tests/test_main_server.py` validating an in-memory stdio client can call the `preprocess` tool and receive deterministic output.
+- Updated `docs/mcp/README.md` with quickstart instructions for running the adapter and configuring VS Code.
+- This change adds no remote services and adheres to on-premise usage requirements.
 
 ---
 

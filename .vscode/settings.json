@@ -1,0 +1,4 @@
+{
+  "mcp.workspaceConfigFile": "${workspaceFolder}/mcp.json",
+  "mcp.defaultServer": "determined"
+}

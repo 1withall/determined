@@ -1,0 +1,11 @@
+{
+  "servers": [
+    {
+      "name": "determined",
+      "transport": "stdio",
+      "command": "uv",
+      "args": ["run", "python", "main.py", "stdio"],
+      "env": {}
+    }
+  ]
+}

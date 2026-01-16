@@ -42,6 +42,12 @@ Note: This package intentionally does not expose any CLI or web UI. It is
 meant to be used by a chat-based controller that handles human interaction
 and decisioning.
 
+Adapter: MCP protocol wrapper
+- This repository provides a small MCP protocol adapter in the project root
+  (`main.py`) that exposes `determined.mcp` over stdio or HTTP for integration
+  with MCP-aware clients and IDEs. See `mcp.json` and `docs/mcp/README.md` for
+  details on how to run and integrate with Visual Studio Code.
+
 Human review API (chat-based) 🔧
 
 - `prepare_human_review(pre: PreprocessedChange) -> Dict`:
