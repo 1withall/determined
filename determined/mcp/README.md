@@ -41,3 +41,28 @@ res = server.apply_approved(pre)
 Note: This package intentionally does not expose any CLI or web UI. It is
 meant to be used by a chat-based controller that handles human interaction
 and decisioning.
+
+Human review API (chat-based) 🔧
+
+- `prepare_human_review(pre: PreprocessedChange) -> Dict`:
+  - Returns a structured payload suitable for being presented in a chat window.
+  - Payload fields: `review_id`, `message`, `summary`, `unified_diff`, `metadata`.
+  - Store the returned `review_id` and present `message` + `summary` + `unified_diff` to the human reviewer.
+
+- `handle_review_response(review_id: str, approved: bool, feedback: Optional[str]) -> Dict`:
+  - Call this after the human responds in the chat (approved/rejected).
+  - If `approved` is True, the change is applied and (by default) committed to the repo; artifacts are archived.
+  - If `approved` is False, the rejection and optional feedback are recorded in the archive.
+
+Example (chat controller):
+
+```python
+pre = server.preprocess({"summary": "Add test", "unified_diff": "diff --git ..."})
+payload = server.prepare_human_review(pre)
+# Present payload['message'], payload['summary'], payload['unified_diff'] to human in chat
+# Human replies with approved=True/False and optional feedback text
+resp = server.handle_review_response(payload['review_id'], approved=True, feedback=None)
+```
+
+This approach ensures the human review step happens explicitly in the chat, and
+that all decisions and artifacts are deterministically archived for auditing.

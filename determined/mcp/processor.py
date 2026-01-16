@@ -198,7 +198,7 @@ def _apply_patchset_to_directory(patch: PatchSet, target_dir: Path) -> Tuple[boo
     return True, details
 
 
-def apply_preprocessed_change(pre: PreprocessedChange, repo_root: Path, archive_dir: Path) -> ApplyResult:
+def apply_preprocessed_change(pre: PreprocessedChange, repo_root: Path, archive_dir: Path, commit: bool = False) -> ApplyResult:
     """Execute the processed diff against a repository directory and archive artifacts.
 
     The function will:
@@ -206,6 +206,7 @@ def apply_preprocessed_change(pre: PreprocessedChange, repo_root: Path, archive_
     - Apply changes to a temporary checkout of repo_root
     - Archive the original diff and metadata into archive_dir/<change_id>/
     - Copy files back to repo_root to reflect change (this emulates commit/apply)
+    - Optionally stage and commit changes into the repository if `commit=True`.
 
     All intermediate logs and artifacts are written to the provided archive_dir.
     """
@@ -266,6 +267,28 @@ def apply_preprocessed_change(pre: PreprocessedChange, repo_root: Path, archive_
                     srcf = Path(root) / f
                     dstf = destroot / f
                     shutil.copy2(srcf, dstf)
+
+            # Optionally stage and commit the changes using git (init if necessary)
+            commit_info: dict | None = None
+            if commit:
+                try:
+                    import subprocess
+
+                    # Initialize git repo if necessary
+                    if not (repo_root / ".git").exists():
+                        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+                    # Stage everything
+                    subprocess.run(["git", "add", "-A"], cwd=repo_root, check=True, capture_output=True)
+                    # Create a deterministic commit message
+                    commit_msg = f"{pre.summary}\n\nchange_id: {change_id}\nmetadata: {json.dumps(pre.metadata)}"
+                    subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_root, check=True, capture_output=True)
+                    # Capture last commit hash
+                    out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True)
+                    commit_hash = out.stdout.decode().strip()
+                    commit_info = {"commit_hash": commit_hash, "commit_message": commit_msg}
+                    details["git_commit"] = commit_info
+                except Exception as exc:  # pragma: no cover - commit errors are environment-dependent
+                    details["git_commit_error"] = str(exc)
 
     return ApplyResult(applied=True, archived_to=change_archive, details=details)
 
