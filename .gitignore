@@ -8,7 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
-prompt_template.txt
 
-# MCP archives
-.mcp_archive/
+# Miscellaneous
+prompt_template.txt
